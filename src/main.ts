@@ -9,55 +9,49 @@ import "./styles.css";
 // 1. Scene Setup
 // ==========================================
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87ceeb); // Sky blue
-scene.fog = new THREE.Fog(0x87ceeb, 30, 80); // Fog for distance fading
+scene.background = new THREE.Color(0x87ceeb);
+scene.fog = new THREE.FogExp2(0x87ceeb, 0.02);
 
 const camera = new THREE.PerspectiveCamera(
-  75,
+  70,
   window.innerWidth / window.innerHeight,
   0.1,
-  1000,
+  500,
 );
-camera.position.set(0, 20, 0); // Start high to fall onto terrain
+camera.position.set(0, 30, 0);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: false });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
-renderer.shadowMap.enabled = false;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 document.body.appendChild(renderer.domElement);
 
 // ==========================================
 // 2. Lighting
 // ==========================================
-// Ambient light for base illumination (like scattered sky light)
-const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
 scene.add(ambientLight);
 
-// Directional light (sun)
-const sunLight = new THREE.DirectionalLight(0xfff4e0, 0.8);
-sunLight.position.set(50, 100, 30);
+const sunLight = new THREE.DirectionalLight(0xfff4e0, 0.75);
+sunLight.position.set(50, 80, 30);
 scene.add(sunLight);
 
-// Hemisphere light for sky/ground color blending
-const hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x556b2f, 0.3);
+const hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x556b2f, 0.25);
 scene.add(hemiLight);
 
 // ==========================================
-// 3. World & Player & UI
+// 3. World, Player, UI
 // ==========================================
 const world = new World(scene);
-world.generateWorldFromRust(24); // 48×48 block terrain
-
 const player = new Player(camera, document.body, world);
 const ui = new UI();
 
-// Connect UI block selection to player
+// Connect UI → Player
 ui.onBlockSelect = (blockType: number) => {
   player.selectedBlockType = blockType;
 };
 player.selectedBlockType = BLOCK_GRASS;
 
-// Handle pointer lock events for start screen
+// Pointer lock → Start/Pause
 player.controls.addEventListener("lock", () => {
   ui.hideStartScreen();
 });
@@ -65,42 +59,54 @@ player.controls.addEventListener("unlock", () => {
   ui.showStartScreen();
 });
 
+// Initial world generation — loads all chunks around spawn
+ui.showLoading();
+world.init(0, 0).then(() => {
+  ui.hideLoading();
+  ui.showStartScreen();
+  console.log(`World ready! ${world.blocks.length} blocks rendered.`);
+});
+
 // ==========================================
 // 4. Game Loop
 // ==========================================
 const clock = new THREE.Clock();
 let frameCount = 0;
-let fpsTime = 0;
+let fpsAccum = 0;
 let currentFps = 0;
 
 function animate() {
   requestAnimationFrame(animate);
 
-  const deltaTime = Math.min(clock.getDelta(), 0.05); // Cap delta to prevent physics explosion
+  const dt = Math.min(clock.getDelta(), 0.05);
 
-  // Update player (physics, movement)
-  player.update(deltaTime);
+  player.update(dt);
 
-  // FPS counter
-  frameCount++;
-  fpsTime += deltaTime;
-  if (fpsTime >= 1.0) {
-    currentFps = frameCount;
-    frameCount = 0;
-    fpsTime = 0;
+  // Dynamic chunk loading/unloading based on player position
+  if (world.ready) {
+    const pos = player.getPosition();
+    world.update(pos.x, pos.z);
   }
 
-  // Update debug UI
+  // FPS
+  frameCount++;
+  fpsAccum += dt;
+  if (fpsAccum >= 1.0) {
+    currentFps = frameCount;
+    frameCount = 0;
+    fpsAccum = 0;
+  }
+
+  // Debug
   const pos = player.getPosition();
   ui.updateDebug(currentFps, pos.x, pos.y, pos.z, world.blocks.length);
 
-  // Render
   renderer.render(scene, camera);
 }
 animate();
 
 // ==========================================
-// 5. Window Resize Handler
+// 5. Window Resize
 // ==========================================
 window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;

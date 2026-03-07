@@ -25,16 +25,15 @@ export class UI {
     private hotbarEl: HTMLDivElement;
     private debugEl: HTMLDivElement;
     private startScreen: HTMLDivElement;
+    private loadingEl: HTMLDivElement;
     private slots: HTMLDivElement[] = [];
 
-    // Callbacks
     onBlockSelect: (blockType: number) => void = () => { };
 
     constructor() {
-        // Create hotbar
+        // Hotbar
         this.hotbarEl = document.createElement("div");
         this.hotbarEl.id = "hotbar";
-        this.hotbarEl.innerHTML = "";
 
         HOTBAR_BLOCKS.forEach((blockType, i) => {
             const slot = document.createElement("div");
@@ -54,7 +53,6 @@ export class UI {
             this.hotbarEl.appendChild(slot);
             this.slots.push(slot);
         });
-
         document.body.appendChild(this.hotbarEl);
 
         // Debug overlay
@@ -62,6 +60,18 @@ export class UI {
         this.debugEl.id = "debug-overlay";
         this.debugEl.style.display = "none";
         document.body.appendChild(this.debugEl);
+
+        // Loading screen
+        this.loadingEl = document.createElement("div");
+        this.loadingEl.id = "loading-screen";
+        this.loadingEl.innerHTML = `
+      <div class="loading-content">
+        <div class="loading-spinner"></div>
+        <p>⛏️ Generating world...</p>
+      </div>
+    `;
+        this.loadingEl.style.display = "none";
+        document.body.appendChild(this.loadingEl);
 
         // Start screen
         this.startScreen = document.createElement("div");
@@ -81,7 +91,7 @@ export class UI {
     `;
         document.body.appendChild(this.startScreen);
 
-        // Keyboard: slot selection (1-6) and F3 debug toggle
+        // Keyboard: slot selection & F3
         document.addEventListener("keydown", (e) => {
             const num = parseInt(e.key);
             if (num >= 1 && num <= HOTBAR_BLOCKS.length) {
@@ -122,6 +132,15 @@ export class UI {
       <div>XYZ: ${x.toFixed(1)} / ${y.toFixed(1)} / ${z.toFixed(1)}</div>
       <div>Blocks: ${blockCount}</div>
     `;
+    }
+
+    showLoading() {
+        this.loadingEl.style.display = "flex";
+        this.startScreen.style.display = "none";
+    }
+
+    hideLoading() {
+        this.loadingEl.style.display = "none";
     }
 
     hideStartScreen() {

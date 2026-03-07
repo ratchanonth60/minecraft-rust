@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
 import { World } from "../world/World";
-import { BLOCK_DIRT } from "../world/TextureManager";
+import { BLOCK_GRASS } from "../world/TextureManager";
 
 export class Player {
   camera: THREE.PerspectiveCamera;
@@ -10,7 +10,7 @@ export class Player {
   keys: Record<string, boolean> = {};
 
   // Movement
-  baseSpeed = 5.0; // blocks per second
+  baseSpeed = 5.0;
   sprintMultiplier = 1.6;
   isSprinting = false;
 
@@ -19,18 +19,19 @@ export class Player {
   gravity = -25;
   jumpForce = 9;
   isOnGround = false;
-  playerHeight = 1.6; // eyes are 1.6 blocks above feet
+  playerHeight = 1.6;
 
   // Raycasting
-  raycaster = new THREE.Raycaster();
-  downRay = new THREE.Raycaster();
+  private raycaster = new THREE.Raycaster();
+  private center = new THREE.Vector2(0, 0);
 
   // Block highlight
-  highlightMesh: THREE.Mesh;
-  highlightedBlock: THREE.Object3D | null = null;
+  highlightMesh: THREE.LineSegments;
+  private highlightTimer = 0;
+  private highlightInterval = 0.08;
 
   // Selected block type
-  selectedBlockType: number = BLOCK_DIRT;
+  selectedBlockType: number = BLOCK_GRASS;
 
   constructor(
     camera: THREE.PerspectiveCamera,
@@ -41,90 +42,71 @@ export class Player {
     this.world = world;
     this.controls = new PointerLockControls(camera, domElement);
 
-    // Create block highlight wireframe
-    const hlGeom = new THREE.BoxGeometry(1.01, 1.01, 1.01);
-    const hlMat = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      wireframe: true,
-      transparent: true,
-      opacity: 0.5,
-    });
-    this.highlightMesh = new THREE.Mesh(hlGeom, hlMat);
+    // Block highlight wireframe
+    const hlGeom = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.005, 1.005, 1.005));
+    const hlMat = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.6 });
+    this.highlightMesh = new THREE.LineSegments(hlGeom, hlMat);
     this.highlightMesh.visible = false;
+    this.highlightMesh.raycast = () => { };
     world.scene.add(this.highlightMesh);
 
-    // Click to lock pointer
+    // Lock pointer
     domElement.addEventListener("click", () => {
-      if (!this.controls.isLocked) {
-        this.controls.lock();
-      }
+      if (!this.controls.isLocked) this.controls.lock();
     });
 
-    // Keyboard input
-    document.addEventListener("keydown", (e) => {
-      this.keys[e.code] = true;
-    });
+    // Keyboard
+    document.addEventListener("keydown", (e) => { this.keys[e.code] = true; });
     document.addEventListener("keyup", (e) => {
       this.keys[e.code] = false;
-      if (e.code === "ControlLeft" || e.code === "ControlRight") {
-        this.isSprinting = false;
+      if (e.code === "ControlLeft" || e.code === "ControlRight") this.isSprinting = false;
+    });
+
+    // Block interaction
+    document.addEventListener("mousedown", (event) => {
+      if (!this.controls.isLocked || !world.ready) return;
+
+      this.raycaster.setFromCamera(this.center, this.camera);
+      this.raycaster.far = 6;
+      const intersects = this.raycaster.intersectObjects(world.blocks, false);
+      if (intersects.length === 0) return;
+
+      const hit = intersects[0];
+
+      if (event.button === 0) {
+        // LEFT CLICK = BREAK
+        world.breakBlock(hit);
+      } else if (event.button === 2 && hit.face) {
+        // RIGHT CLICK = PLACE
+        const blockPos = world.getHitPosition(hit);
+        if (!blockPos) return;
+
+        const newPos = blockPos.clone().add(hit.face.normal).round();
+
+        // Don't place inside player
+        const px = Math.round(this.camera.position.x);
+        const pz = Math.round(this.camera.position.z);
+        const feetY = Math.round(this.camera.position.y - this.playerHeight);
+        if (
+          Math.round(newPos.x) === px &&
+          Math.round(newPos.z) === pz &&
+          Math.round(newPos.y) >= feetY &&
+          Math.round(newPos.y) <= feetY + 1
+        ) return;
+
+        world.addBlock(newPos, this.selectedBlockType);
       }
     });
 
-    // Block interaction: left click = break, right click = place
-    domElement.addEventListener("mousedown", (event) => {
-      if (!this.controls.isLocked) return;
-
-      this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
-      this.raycaster.far = 7; // reach distance
-      const intersects = this.raycaster.intersectObjects(world.blocks);
-
-      if (intersects.length > 0) {
-        const intersect = intersects[0];
-
-        if (event.button === 0) {
-          // Left click = break block
-          world.removeBlock(intersect.object);
-        } else if (event.button === 2) {
-          // Right click = place block
-          if (intersect.face) {
-            const newPos = intersect.object.position
-              .clone()
-              .add(intersect.face.normal);
-            // Don't place block inside player
-            const playerPos = this.camera.position.clone();
-            const dist = newPos.distanceTo(
-              new THREE.Vector3(playerPos.x, playerPos.y - 0.8, playerPos.z),
-            );
-            if (dist > 0.8) {
-              world.addBlock(newPos, this.selectedBlockType);
-            }
-          }
-        }
-      }
-    });
-
-    // Prevent context menu on right click
-    domElement.addEventListener("contextmenu", (e) => e.preventDefault());
+    document.addEventListener("contextmenu", (e) => e.preventDefault());
   }
 
   update(deltaTime: number) {
-    if (!this.controls.isLocked) return;
+    if (!this.controls.isLocked || !this.world.ready) return;
 
-    // Sprint
-    if (
-      this.keys["ControlLeft"] ||
-      this.keys["ControlRight"]
-    ) {
-      this.isSprinting = true;
-    }
+    if (this.keys["ControlLeft"] || this.keys["ControlRight"]) this.isSprinting = true;
+    const speed = this.baseSpeed * (this.isSprinting ? this.sprintMultiplier : 1) * deltaTime;
 
-    const speed =
-      this.baseSpeed *
-      (this.isSprinting ? this.sprintMultiplier : 1) *
-      deltaTime;
-
-    // Movement
     if (this.keys["KeyW"]) this.controls.moveForward(speed);
     if (this.keys["KeyS"]) this.controls.moveForward(-speed);
     if (this.keys["KeyA"]) this.controls.moveRight(-speed);
@@ -136,57 +118,52 @@ export class Player {
       this.isOnGround = false;
     }
 
-    // Apply gravity
+    // Gravity
     this.velocityY += this.gravity * deltaTime;
     this.camera.position.y += this.velocityY * deltaTime;
 
-    // Ground collision - cast ray downward from player position
-    const feetPos = this.camera.position.clone();
-    feetPos.y -= this.playerHeight;
-
-    // Check if there's a block below feet
-    const groundY = this.world.getGroundHeight(
-      this.camera.position.x,
-      this.camera.position.z,
-    );
-    const groundSurface = groundY + 1; // top of the block
-    const feetY = this.camera.position.y - this.playerHeight;
-
-    if (feetY <= groundSurface && this.velocityY <= 0) {
-      this.camera.position.y = groundSurface + this.playerHeight;
+    // Ground collision
+    const groundY = this.world.getGroundHeight(this.camera.position.x, this.camera.position.z);
+    const surface = groundY + 1;
+    if (this.camera.position.y - this.playerHeight <= surface && this.velocityY <= 0) {
+      this.camera.position.y = surface + this.playerHeight;
       this.velocityY = 0;
       this.isOnGround = true;
     } else {
       this.isOnGround = false;
     }
 
-    // Prevent falling through the void
-    if (this.camera.position.y < -10) {
-      this.camera.position.y = 20;
+    // Respawn on void
+    if (this.camera.position.y < -20) {
+      this.camera.position.set(0, 30, 0);
       this.velocityY = 0;
     }
 
-    // Block highlight — show wireframe on hovered block
-    this.updateBlockHighlight();
-  }
-
-  private updateBlockHighlight() {
-    this.raycaster.setFromCamera(new THREE.Vector2(0, 0), this.camera);
-    this.raycaster.far = 7;
-    const intersects = this.raycaster.intersectObjects(this.world.blocks);
-
-    if (intersects.length > 0) {
-      const hit = intersects[0].object;
-      this.highlightMesh.position.copy(hit.position);
-      this.highlightMesh.visible = true;
-      this.highlightedBlock = hit;
-    } else {
-      this.highlightMesh.visible = false;
-      this.highlightedBlock = null;
+    // Throttled highlight
+    this.highlightTimer += deltaTime;
+    if (this.highlightTimer >= this.highlightInterval) {
+      this.highlightTimer = 0;
+      this.updateHighlight();
     }
   }
 
+  private updateHighlight() {
+    this.raycaster.setFromCamera(this.center, this.camera);
+    this.raycaster.far = 6;
+    const intersects = this.raycaster.intersectObjects(this.world.blocks, false);
+
+    if (intersects.length > 0) {
+      const pos = this.world.getHitPosition(intersects[0]);
+      if (pos) {
+        this.highlightMesh.position.copy(pos);
+        this.highlightMesh.visible = true;
+        return;
+      }
+    }
+    this.highlightMesh.visible = false;
+  }
+
   getPosition(): THREE.Vector3 {
-    return this.camera.position.clone();
+    return this.camera.position;
   }
 }

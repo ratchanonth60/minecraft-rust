@@ -11,6 +11,10 @@ const BLOCK_STONE: u8 = 3;
 const BLOCK_SAND: u8 = 4;
 const BLOCK_WOOD: u8 = 5;
 const BLOCK_LEAVES: u8 = 6;
+const BLOCK_WATER: u8 = 7;
+
+const CHUNK_SIZE: i32 = 16;
+const SEA_LEVEL: i32 = 8;
 
 #[derive(Serialize)]
 struct BlockData {
@@ -20,119 +24,107 @@ struct BlockData {
     block_type: u8,
 }
 
-/// Determine if a tree should be placed at (x, z) using a secondary noise
-fn should_place_tree(perlin: &Perlin, x: i32, z: i32) -> bool {
-    let tree_noise = perlin.get([x as f64 * 0.5 + 1000.0, z as f64 * 0.5 + 1000.0]);
-    tree_noise > 0.55
+/// Multi-octave noise for more natural terrain
+fn terrain_height(perlin: &Perlin, world_x: i32, world_z: i32) -> i32 {
+    let x = world_x as f64;
+    let z = world_z as f64;
+
+    // Octave 1: Large-scale hills & valleys
+    let h1 = perlin.get([x * 0.005, z * 0.005]) * 24.0;
+    // Octave 2: Medium detail
+    let h2 = perlin.get([x * 0.02, z * 0.02]) * 8.0;
+    // Octave 3: Small bumps
+    let h3 = perlin.get([x * 0.08, z * 0.08]) * 3.0;
+    // Octave 4: Micro detail
+    let h4 = perlin.get([x * 0.15, z * 0.15]) * 1.5;
+
+    let base = 12.0; // Base terrain height
+    (base + h1 + h2 + h3 + h4).max(1.0) as i32
 }
 
-/// Generate a tree (trunk + leaves) at the given base position
-fn generate_tree(blocks: &mut Vec<BlockData>, base_x: i32, base_y: i32, base_z: i32) {
-    let trunk_height = 5;
-
-    // Trunk (wood blocks)
-    for dy in 0..trunk_height {
-        blocks.push(BlockData {
-            x: base_x,
-            y: base_y + dy,
-            z: base_z,
-            block_type: BLOCK_WOOD,
-        });
+/// Check if a tree should grow here (deterministic based on position)
+fn should_place_tree(perlin: &Perlin, x: i32, z: i32, height: i32) -> bool {
+    if height <= SEA_LEVEL + 1 {
+        return false; // No trees on beaches/underwater
     }
+    let tree_val = perlin.get([x as f64 * 0.8 + 500.0, z as f64 * 0.8 + 500.0]);
+    tree_val > 0.45
+}
 
-    // Leaves (sphere-ish shape around top of trunk)
-    let leaf_base = base_y + trunk_height - 1;
+fn generate_tree(blocks: &mut Vec<BlockData>, bx: i32, by: i32, bz: i32) {
+    let trunk_h = 5;
+    for dy in 0..trunk_h {
+        blocks.push(BlockData { x: bx, y: by + dy, z: bz, block_type: BLOCK_WOOD });
+    }
+    let leaf_y = by + trunk_h - 1;
     for dy in 0..3i32 {
-        let radius: i32 = if dy == 2 { 1 } else { 2 };
-        for dx in -radius..=radius {
-            for dz in -radius..=radius {
-                // Skip corners for rounder shape
-                if dx.abs() == radius && dz.abs() == radius && dy < 2 {
-                    continue;
-                }
-                // Don't overwrite trunk
-                if dx == 0 && dz == 0 && dy < 1 {
-                    continue;
-                }
+        let r: i32 = if dy == 2 { 1 } else { 2 };
+        for dx in -r..=r {
+            for dz in -r..=r {
+                if dx.abs() == r && dz.abs() == r { continue; }
+                if dx == 0 && dz == 0 && dy == 0 { continue; }
                 blocks.push(BlockData {
-                    x: base_x + dx,
-                    y: leaf_base + dy,
-                    z: base_z + dz,
-                    block_type: BLOCK_LEAVES,
+                    x: bx + dx, y: leaf_y + dy, z: bz + dz, block_type: BLOCK_LEAVES,
                 });
             }
         }
     }
 }
 
+/// Generate a single 16×16 chunk at chunk coordinates (chunk_x, chunk_z)
 #[tauri::command]
-fn generate_chunk(size: i32) -> Vec<BlockData> {
+fn generate_chunk(chunk_x: i32, chunk_z: i32) -> Vec<BlockData> {
+    let perlin = Perlin::new(42); // Fixed seed for reproducibility
     let mut blocks = Vec::new();
-    let perlin = Perlin::new(42); // Seed
+    let mut tree_candidates = Vec::new();
 
-    let scale = 0.08; // Noise scale — controls terrain smoothness
-    let amplitude = 8.0; // Max height variation
-    let base_height = 4; // Minimum ground level
+    let base_x = chunk_x * CHUNK_SIZE;
+    let base_z = chunk_z * CHUNK_SIZE;
 
-    // Keep track of surface heights for tree placement
-    let mut surface_map: Vec<(i32, i32, i32)> = Vec::new();
+    for lx in 0..CHUNK_SIZE {
+        for lz in 0..CHUNK_SIZE {
+            let wx = base_x + lx;
+            let wz = base_z + lz;
+            let height = terrain_height(&perlin, wx, wz);
+            let is_beach = height <= SEA_LEVEL + 1 && height >= SEA_LEVEL - 1;
 
-    for x in -size..size {
-        for z in -size..size {
-            // 2D Perlin noise for heightmap
-            let noise_val = perlin.get([x as f64 * scale, z as f64 * scale]);
-            // noise_val is in range [-1, 1], map to height
-            let height = base_height + (((noise_val + 1.0) / 2.0) * amplitude) as i32;
-
-            // Determine if this is a beach/sand area (low terrain near water level)
-            let is_sand = height <= base_height + 1;
-
+            // Solid terrain column
             for y in 0..=height {
                 let block_type = if y == height {
-                    // Surface block
-                    if is_sand {
-                        BLOCK_SAND
-                    } else {
-                        BLOCK_GRASS
-                    }
-                } else if y > height - 3 {
-                    // Top 3 layers under surface = dirt
-                    BLOCK_DIRT
+                    if is_beach || height <= SEA_LEVEL { BLOCK_SAND } else { BLOCK_GRASS }
+                } else if y > height - 4 {
+                    if is_beach { BLOCK_SAND } else { BLOCK_DIRT }
                 } else {
-                    // Everything else = stone
                     BLOCK_STONE
                 };
-
-                blocks.push(BlockData {
-                    x,
-                    y,
-                    z,
-                    block_type,
-                });
+                blocks.push(BlockData { x: wx, y, z: wz, block_type });
             }
 
-            // Track surface for tree placement (only on grass, not sand)
-            if !is_sand && height > base_height + 2 {
-                surface_map.push((x, height + 1, z));
+            // Water: fill up to sea level if terrain is below
+            if height < SEA_LEVEL {
+                for y in (height + 1)..=SEA_LEVEL {
+                    blocks.push(BlockData { x: wx, y, z: wz, block_type: BLOCK_WATER });
+                }
+            }
+
+            // Tree candidate (only in inner area to avoid cross-chunk issues)
+            if lx >= 3 && lx < CHUNK_SIZE - 3 && lz >= 3 && lz < CHUNK_SIZE - 3 {
+                if should_place_tree(&perlin, wx, wz, height) {
+                    tree_candidates.push((wx, height + 1, wz));
+                }
             }
         }
     }
 
-    // Generate trees at certain positions
-    for (x, y, z) in &surface_map {
-        if should_place_tree(&perlin, *x, *z) {
-            // Make sure trees aren't too close to edges
-            if x.abs() < size - 3 && z.abs() < size - 3 {
-                generate_tree(&mut blocks, *x, *y, *z);
-            }
-        }
+    // Generate trees
+    for (tx, ty, tz) in tree_candidates {
+        generate_tree(&mut blocks, tx, ty, tz);
     }
 
     blocks
 }
 
 fn main() {
-    // แก้ปัญหาการเรนเดอร์ WebGL ของ WebKit บน Linux
     #[cfg(target_os = "linux")]
     unsafe {
         std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
