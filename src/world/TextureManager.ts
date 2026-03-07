@@ -14,6 +14,7 @@ export const BLOCK_STONE = 3;
 export const BLOCK_SAND = 4;
 export const BLOCK_WOOD = 5;
 export const BLOCK_LEAVES = 6;
+export const BLOCK_WATER = 7;
 
 export const BLOCK_NAMES: Record<number, string> = {
     [BLOCK_GRASS]: "Grass",
@@ -22,6 +23,7 @@ export const BLOCK_NAMES: Record<number, string> = {
     [BLOCK_SAND]: "Sand",
     [BLOCK_WOOD]: "Wood",
     [BLOCK_LEAVES]: "Leaves",
+    [BLOCK_WATER]: "Water",
 };
 
 export const BLOCK_COLORS: Record<number, string> = {
@@ -31,6 +33,7 @@ export const BLOCK_COLORS: Record<number, string> = {
     [BLOCK_SAND]: "#e8d68c",
     [BLOCK_WOOD]: "#6b4226",
     [BLOCK_LEAVES]: "#2d8a4e",
+    [BLOCK_WATER]: "#3b7dd8",
 };
 
 // Simple seeded random for texture generation
@@ -231,6 +234,19 @@ export function getBlockMaterials(
             mat.transparent = true;
             mat.opacity = 0.9;
             return mat;
+        }
+        case BLOCK_WATER: {
+            if (!materialCache.has("water")) {
+                materialCache.set(
+                    "water",
+                    new THREE.MeshLambertMaterial({
+                        color: 0x3b7dd8,
+                        transparent: true,
+                        opacity: 0.6,
+                    }),
+                );
+            }
+            return materialCache.get("water")!;
         }
         default:
             return getOrCreateMaterial("dirt", drawDirt);
