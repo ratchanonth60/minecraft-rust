@@ -17,6 +17,7 @@ export class Player {
   // Physics
   velocityY = 0;
   gravity = -25;
+  lastValidGroundY = 0;
   jumpForce = 9;
   isOnGround = false;
   playerHeight = 1.6;
@@ -43,11 +44,17 @@ export class Player {
     this.controls = new PointerLockControls(camera, domElement);
 
     // Block highlight wireframe
-    const hlGeom = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.005, 1.005, 1.005));
-    const hlMat = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.6 });
+    const hlGeom = new THREE.EdgesGeometry(
+      new THREE.BoxGeometry(1.005, 1.005, 1.005),
+    );
+    const hlMat = new THREE.LineBasicMaterial({
+      color: 0x000000,
+      transparent: true,
+      opacity: 0.6,
+    });
     this.highlightMesh = new THREE.LineSegments(hlGeom, hlMat);
     this.highlightMesh.visible = false;
-    this.highlightMesh.raycast = () => { };
+    this.highlightMesh.raycast = () => {};
     world.scene.add(this.highlightMesh);
 
     // Lock pointer
@@ -56,10 +63,13 @@ export class Player {
     });
 
     // Keyboard
-    document.addEventListener("keydown", (e) => { this.keys[e.code] = true; });
+    document.addEventListener("keydown", (e) => {
+      this.keys[e.code] = true;
+    });
     document.addEventListener("keyup", (e) => {
       this.keys[e.code] = false;
-      if (e.code === "ControlLeft" || e.code === "ControlRight") this.isSprinting = false;
+      if (e.code === "ControlLeft" || e.code === "ControlRight")
+        this.isSprinting = false;
     });
 
     // Block interaction
@@ -92,7 +102,8 @@ export class Player {
           Math.round(newPos.z) === pz &&
           Math.round(newPos.y) >= feetY &&
           Math.round(newPos.y) <= feetY + 1
-        ) return;
+        )
+          return;
 
         world.addBlock(newPos, this.selectedBlockType);
       }
@@ -104,8 +115,12 @@ export class Player {
   update(deltaTime: number) {
     if (!this.controls.isLocked || !this.world.ready) return;
 
-    if (this.keys["ControlLeft"] || this.keys["ControlRight"]) this.isSprinting = true;
-    const speed = this.baseSpeed * (this.isSprinting ? this.sprintMultiplier : 1) * deltaTime;
+    if (this.keys["ControlLeft"] || this.keys["ControlRight"])
+      this.isSprinting = true;
+    const speed =
+      this.baseSpeed *
+      (this.isSprinting ? this.sprintMultiplier : 1) *
+      deltaTime;
 
     if (this.keys["KeyW"]) this.controls.moveForward(speed);
     if (this.keys["KeyS"]) this.controls.moveForward(-speed);
@@ -123,9 +138,18 @@ export class Player {
     this.camera.position.y += this.velocityY * deltaTime;
 
     // Ground collision
-    const groundY = this.world.getGroundHeight(this.camera.position.x, this.camera.position.z);
-    const surface = groundY + 1;
-    if (this.camera.position.y - this.playerHeight <= surface && this.velocityY <= 0) {
+    const groundY = this.world.getGroundHeight(
+      this.camera.position.x,
+      this.camera.position.z,
+    );
+    // Use cached ground height when chunk is unloaded (groundY === -1)
+    const effectiveGround = groundY >= 0 ? groundY : this.lastValidGroundY;
+    if (groundY >= 0) this.lastValidGroundY = groundY;
+    const surface = effectiveGround + 1;
+    if (
+      this.camera.position.y - this.playerHeight <= surface &&
+      this.velocityY <= 0
+    ) {
       this.camera.position.y = surface + this.playerHeight;
       this.velocityY = 0;
       this.isOnGround = true;
@@ -150,7 +174,10 @@ export class Player {
   private updateHighlight() {
     this.raycaster.setFromCamera(this.center, this.camera);
     this.raycaster.far = 6;
-    const intersects = this.raycaster.intersectObjects(this.world.blocks, false);
+    const intersects = this.raycaster.intersectObjects(
+      this.world.blocks,
+      false,
+    );
 
     if (intersects.length > 0) {
       const pos = this.world.getHitPosition(intersects[0]);

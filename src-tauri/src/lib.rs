@@ -30,22 +30,38 @@ fn terrain_height(perlin: &Perlin, wx: i32, wz: i32) -> i32 {
 }
 
 fn should_place_tree(perlin: &Perlin, x: i32, z: i32, height: i32) -> bool {
-    if height <= SEA_LEVEL + 1 { return false; }
+    if height <= SEA_LEVEL + 1 {
+        return false;
+    }
     perlin.get([x as f64 * 0.8 + 500.0, z as f64 * 0.8 + 500.0]) > 0.45
 }
 
 fn generate_tree(blocks: &mut Vec<BlockData>, bx: i32, by: i32, bz: i32) {
     for dy in 0..5 {
-        blocks.push(BlockData { x: bx, y: by + dy, z: bz, block_type: BLOCK_WOOD });
+        blocks.push(BlockData {
+            x: bx,
+            y: by + dy,
+            z: bz,
+            block_type: BLOCK_WOOD,
+        });
     }
     let ly = by + 4;
     for dy in 0..3i32 {
         let r: i32 = if dy == 2 { 1 } else { 2 };
         for dx in -r..=r {
             for dz in -r..=r {
-                if dx.abs() == r && dz.abs() == r { continue; }
-                if dx == 0 && dz == 0 && dy == 0 { continue; }
-                blocks.push(BlockData { x: bx + dx, y: ly + dy, z: bz + dz, block_type: BLOCK_LEAVES });
+                if dx.abs() == r && dz.abs() == r {
+                    continue;
+                }
+                if dx == 0 && dz == 0 && dy == 0 {
+                    continue;
+                }
+                blocks.push(BlockData {
+                    x: bx + dx,
+                    y: ly + dy,
+                    z: bz + dz,
+                    block_type: BLOCK_LEAVES,
+                });
             }
         }
     }
@@ -64,25 +80,46 @@ fn generate_chunk(chunk_x: i32, chunk_z: i32) -> Vec<BlockData> {
             let wx = bx + lx;
             let wz = bz + lz;
             let h = terrain_height(&perlin, wx, wz);
-            let beach = h <= SEA_LEVEL + 1 && h >= SEA_LEVEL - 1;
+            let beach = (SEA_LEVEL - 1..=SEA_LEVEL + 1).contains(&h);
 
             for y in 0..=h {
                 let bt = if y == h {
-                    if beach || h <= SEA_LEVEL { BLOCK_SAND } else { BLOCK_GRASS }
+                    if beach || h <= SEA_LEVEL {
+                        BLOCK_SAND
+                    } else {
+                        BLOCK_GRASS
+                    }
                 } else if y > h - 4 {
-                    if beach { BLOCK_SAND } else { BLOCK_DIRT }
-                } else { BLOCK_STONE };
-                blocks.push(BlockData { x: wx, y, z: wz, block_type: bt });
+                    if beach {
+                        BLOCK_SAND
+                    } else {
+                        BLOCK_DIRT
+                    }
+                } else {
+                    BLOCK_STONE
+                };
+                blocks.push(BlockData {
+                    x: wx,
+                    y,
+                    z: wz,
+                    block_type: bt,
+                });
             }
             if h < SEA_LEVEL {
                 for y in (h + 1)..=SEA_LEVEL {
-                    blocks.push(BlockData { x: wx, y, z: wz, block_type: BLOCK_WATER });
+                    blocks.push(BlockData {
+                        x: wx,
+                        y,
+                        z: wz,
+                        block_type: BLOCK_WATER,
+                    });
                 }
             }
-            if lx >= 3 && lx < CHUNK_SIZE - 3 && lz >= 3 && lz < CHUNK_SIZE - 3 {
-                if should_place_tree(&perlin, wx, wz, h) {
-                    trees.push((wx, h + 1, wz));
-                }
+            if (3..CHUNK_SIZE - 3).contains(&lx)
+                && (3..CHUNK_SIZE - 3).contains(&lz)
+                && should_place_tree(&perlin, wx, wz, h)
+            {
+                trees.push((wx, h + 1, wz));
             }
         }
     }

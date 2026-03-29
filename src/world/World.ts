@@ -227,9 +227,13 @@ export class World {
       }
     }
 
-    // Unload far chunks
+    // Unload far chunks (never unload chunks the player is standing in or adjacent to)
     for (const key of [...this.loadedChunks]) {
-      if (!needed.has(key)) this.unloadChunk(key);
+      if (!needed.has(key)) {
+        const [ucx, ucz] = key.split(",").map(Number);
+        if (Math.abs(ucx - pcx) <= 1 && Math.abs(ucz - pcz) <= 1) continue;
+        this.unloadChunk(key);
+      }
     }
 
     // Load needed chunks
@@ -347,7 +351,7 @@ export class World {
   getGroundHeight(x: number, z: number): number {
     const rx = Math.round(x);
     const rz = Math.round(z);
-    for (let y = 50; y >= 0; y--) {
+    for (let y = 128; y >= 0; y--) {
       const d = this.allBlockData.get(this.posKey(rx, y, rz));
       if (d && d.block_type !== BLOCK_WATER) return y;
     }
