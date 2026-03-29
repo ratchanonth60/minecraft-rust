@@ -11,6 +11,7 @@ A voxel-based Minecraft clone built with **Tauri v2** (Rust backend) + **Three.j
 ## ✨ Features
 
 ### 🗺️ Infinite World Generation
+
 - **Chunk-based** terrain — 16×16 chunks load/unload dynamically as you walk
 - **4-octave Perlin noise** terrain (Rust) — natural hills, valleys, and mountains
 - **Multi-block types** — Grass, Dirt, Stone, Sand, Wood, Leaves, Water
@@ -19,6 +20,7 @@ A voxel-based Minecraft clone built with **Tauri v2** (Rust backend) + **Three.j
 - **Beach/sand detection** — sand at shoreline transitions
 
 ### 🎮 Gameplay
+
 - **First-person controls** — WASD movement + mouse look
 - **Physics** — gravity, jumping, ground collision detection
 - **Block breaking** — left-click to destroy blocks (reveals hidden blocks underneath)
@@ -27,6 +29,7 @@ A voxel-based Minecraft clone built with **Tauri v2** (Rust backend) + **Three.j
 - **Sprint** — hold Ctrl for 1.6× speed
 
 ### 🎨 Rendering
+
 - **Procedural textures** — 16×16 pixel art generated on Canvas (no image files!)
 - **Per-face materials** — grass blocks have green top, dirt bottom, grass-side edges
 - **InstancedMesh rendering** — ~350 draw calls instead of ~15,000 for massive FPS gains
@@ -35,6 +38,7 @@ A voxel-based Minecraft clone built with **Tauri v2** (Rust backend) + **Three.j
 - **Exponential fog** — smooth distance fade like Minecraft
 
 ### 🖥️ UI
+
 - **Hotbar** — glassmorphic block selection bar at bottom
 - **Crosshair** — CSS-only thin cross
 - **Debug overlay (F3)** — FPS, XYZ position, rendered block count
@@ -77,18 +81,18 @@ Output binaries will be in `src-tauri/target/release/`.
 
 ## 🎹 Controls
 
-| Key | Action |
-|-----|--------|
-| **WASD** | Move |
-| **Mouse** | Look around |
-| **Space** | Jump |
-| **Ctrl** | Sprint |
-| **Left Click** | Break block |
-| **Right Click** | Place block |
-| **1-6** | Select block type |
-| **Scroll Wheel** | Cycle block types |
-| **F3** | Toggle debug info |
-| **Esc** | Pause / Unlock mouse |
+| Key              | Action               |
+| ---------------- | -------------------- |
+| **WASD**         | Move                 |
+| **Mouse**        | Look around          |
+| **Space**        | Jump                 |
+| **Ctrl**         | Sprint               |
+| **Left Click**   | Break block          |
+| **Right Click**  | Place block          |
+| **1-6**          | Select block type    |
+| **Scroll Wheel** | Cycle block types    |
+| **F3**           | Toggle debug info    |
+| **Esc**          | Pause / Unlock mouse |
 
 ---
 
@@ -124,15 +128,15 @@ minecraft-tauri/
 
 ### Performance Optimizations
 
-| Technique | Impact |
-|-----------|--------|
-| **InstancedMesh** | ~7 draw calls per chunk vs 1 per block. 50× fewer total draw calls |
-| **Occlusion culling** | Only render blocks with exposed faces. ~60-70% block reduction |
-| **Shared geometry** | Single BoxGeometry instance for all blocks |
-| **Material caching** | One material per block type, reused across all chunks |
-| **Throttled raycasting** | Block highlight updates every 80ms, not every frame |
-| **Cached raycast targets** | Flat array rebuilt only on chunk changes |
-| **Chunk boundary detection** | World update only runs when player crosses chunk border |
+| Technique                    | Impact                                                             |
+| ---------------------------- | ------------------------------------------------------------------ |
+| **InstancedMesh**            | ~7 draw calls per chunk vs 1 per block. 50× fewer total draw calls |
+| **Occlusion culling**        | Only render blocks with exposed faces. ~60-70% block reduction     |
+| **Shared geometry**          | Single BoxGeometry instance for all blocks                         |
+| **Material caching**         | One material per block type, reused across all chunks              |
+| **Throttled raycasting**     | Block highlight updates every 80ms, not every frame                |
+| **Cached raycast targets**   | Flat array rebuilt only on chunk changes                           |
+| **Chunk boundary detection** | World update only runs when player crosses chunk border            |
 
 ---
 
