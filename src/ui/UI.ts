@@ -26,9 +26,11 @@ export class UI {
     private debugEl: HTMLDivElement;
     private startScreen: HTMLDivElement;
     private loadingEl: HTMLDivElement;
+    private loadingTextEl: HTMLParagraphElement;
     private slots: HTMLDivElement[] = [];
 
     onBlockSelect: (blockType: number) => void = () => { };
+    onStart: () => void = () => { };
 
     constructor() {
         // Hotbar
@@ -67,9 +69,10 @@ export class UI {
         this.loadingEl.innerHTML = `
       <div class="loading-content">
         <div class="loading-spinner"></div>
-        <p>⛏️ Generating world...</p>
+        <p id="loading-text">⛏️ Generating world...</p>
       </div>
     `;
+        this.loadingTextEl = this.loadingEl.querySelector("#loading-text") as HTMLParagraphElement;
         this.loadingEl.style.display = "none";
         document.body.appendChild(this.loadingEl);
 
@@ -85,10 +88,13 @@ export class UI {
           <p>WASD — Move &nbsp; | &nbsp; Space — Jump</p>
           <p>L-Click — Break &nbsp; | &nbsp; R-Click — Place</p>
           <p>1-6 — Select Block &nbsp; | &nbsp; Ctrl — Sprint</p>
-          <p>F3 — Debug Info</p>
+          <p>F3 — Debug Info &nbsp; | &nbsp; F5/F9 — Save/Load</p>
         </div>
       </div>
     `;
+        this.startScreen.addEventListener("click", () => {
+            this.onStart();
+        });
         document.body.appendChild(this.startScreen);
 
         // Keyboard: slot selection & F3
@@ -134,13 +140,24 @@ export class UI {
     `;
     }
 
-    showLoading() {
+    showLoading(message: string = "⛏️ Generating world...") {
+        this.loadingTextEl.textContent = message;
         this.loadingEl.style.display = "flex";
         this.startScreen.style.display = "none";
     }
 
     hideLoading() {
         this.loadingEl.style.display = "none";
+    }
+
+    showError(message: string) {
+        this.loadingEl.innerHTML = `
+      <div class="loading-content">
+        <p>${message}</p>
+      </div>
+    `;
+        this.loadingEl.style.display = "flex";
+        this.startScreen.style.display = "none";
     }
 
     hideStartScreen() {

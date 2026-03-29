@@ -1,6 +1,6 @@
-# ⛏️ Minecraft Clone
+# Minecraft Tauri
 
-A voxel-based Minecraft clone built with **Tauri v2** (Rust backend) + **Three.js** (WebGL rendering).
+A voxel sandbox prototype built with **Tauri v2** (Rust backend) + **Three.js** (WebGL rendering).
 
 ![Tauri](https://img.shields.io/badge/Tauri-v2-blue?logo=tauri)
 ![Three.js](https://img.shields.io/badge/Three.js-r183-green?logo=three.js)
@@ -8,46 +8,40 @@ A voxel-based Minecraft clone built with **Tauri v2** (Rust backend) + **Three.j
 
 ---
 
-## ✨ Features
+## Features
 
-### 🗺️ Infinite World Generation
+### World
 
-- **Chunk-based** terrain — 16×16 chunks load/unload dynamically as you walk
-- **4-octave Perlin noise** terrain (Rust) — natural hills, valleys, and mountains
-- **Multi-block types** — Grass, Dirt, Stone, Sand, Wood, Leaves, Water
-- **Procedural trees** — auto-generated on grass areas
-- **Sea level water** — low terrain fills with semi-transparent water
-- **Beach/sand detection** — sand at shoreline transitions
+- Chunk-based terrain with lazy loading and unloading
+- Rust-driven terrain generation with caves, water, trees, and ruins
+- Save/load support for modified world state
+- Chunk meshing in Rust using exposed-face detection
 
-### 🎮 Gameplay
+### Gameplay
 
-- **First-person controls** — WASD movement + mouse look
-- **Physics** — gravity, jumping, ground collision detection
-- **Block breaking** — left-click to destroy blocks (reveals hidden blocks underneath)
-- **Block placing** — right-click to place blocks
-- **Block selection** — hotbar with 6 block types (keys 1-6 or scroll wheel)
-- **Sprint** — hold Ctrl for 1.6× speed
+- First-person movement and mouse look
+- Rust-side collision and physics stepping
+- Block break/place interactions
+- Hotbar block selection
+- A* pathfinding endpoint for future mob logic
 
-### 🎨 Rendering
+### Rendering
 
-- **Procedural textures** — 16×16 pixel art generated on Canvas (no image files!)
-- **Per-face materials** — grass blocks have green top, dirt bottom, grass-side edges
-- **InstancedMesh rendering** — ~350 draw calls instead of ~15,000 for massive FPS gains
-- **Occlusion culling** — hidden blocks aren't rendered (60-70% reduction)
-- **Ambient + Directional + Hemisphere lighting** — realistic shading
-- **Exponential fog** — smooth distance fade like Minecraft
+- Procedural block textures generated in the browser
+- Three.js `BufferGeometry` built from backend mesh payloads
+- Per-face materials for blocks like grass
+- Ambient, directional, and hemisphere lighting
 
-### 🖥️ UI
+### UI
 
-- **Hotbar** — glassmorphic block selection bar at bottom
-- **Crosshair** — CSS-only thin cross
-- **Debug overlay (F3)** — FPS, XYZ position, rendered block count
-- **Start screen** — instructions with click-to-play
-- **Loading screen** — spinner during world generation
+- Hotbar for block selection
+- Debug overlay
+- Start screen and loading screen
+- Save/load shortcuts
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -55,31 +49,24 @@ A voxel-based Minecraft clone built with **Tauri v2** (Rust backend) + **Three.j
 - [Bun](https://bun.sh/) or [Node.js](https://nodejs.org/)
 - System dependencies for Tauri: [Tauri Prerequisites](https://v2.tauri.app/start/prerequisites/)
 
-### Install & Run
+### Install And Run
 
 ```bash
-# Clone the repo
 git clone <repo-url>
 cd minecraft-tauri
 
-# Install JS dependencies
 bun install
 
-# Run in development mode
 bun run tauri dev
 ```
 
-### Build for Production
+### Build
 
 ```bash
 bun run tauri build
 ```
 
-Output binaries will be in `src-tauri/target/release/`.
-
----
-
-## 🎹 Controls
+## Controls
 
 | Key              | Action               |
 | ---------------- | -------------------- |
@@ -92,54 +79,31 @@ Output binaries will be in `src-tauri/target/release/`.
 | **1-6**          | Select block type    |
 | **Scroll Wheel** | Cycle block types    |
 | **F3**           | Toggle debug info    |
+| **F5**           | Save world           |
+| **F9**           | Load world           |
 | **Esc**          | Pause / Unlock mouse |
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
-```
-minecraft-tauri/
-├── src/                    # Frontend (TypeScript + Three.js)
-│   ├── main.ts             # Entry point, scene, lighting, game loop
-│   ├── styles.css          # UI styling
-│   ├── player/
-│   │   └── Player.ts       # Movement, physics, block interaction
-│   ├── world/
-│   │   ├── World.ts        # Chunk loading, InstancedMesh rendering
-│   │   └── TextureManager.ts  # Procedural texture generation
-│   └── ui/
-│       └── UI.ts           # Hotbar, debug overlay, start screen
-├── src-tauri/              # Backend (Rust)
-│   └── src/
-│       ├── main.rs         # Terrain generation with Perlin noise
-│       └── lib.rs          # Mobile entry point
-├── index.html
-├── package.json
-└── vite.config.ts
-```
+See [Architecture](./docs/ARCHITECTURE.md) for the current module layout and data flow.
 
-### How Chunk Loading Works
+## Documentation
 
-1. Player position → calculate current chunk coordinates
-2. Compare with loaded chunks → determine which to load/unload
-3. Load: Rust generates 16×16 block column → occlusion cull → create InstancedMesh per block type
-4. Unload: dispose InstancedMesh objects, clear block data
+- [Architecture](./docs/ARCHITECTURE.md)
+- [Backend API](./docs/BACKEND_API.md)
+- [Contributing](./CONTRIBUTING.md)
 
-### Performance Optimizations
+## Development Notes
 
-| Technique                    | Impact                                                             |
-| ---------------------------- | ------------------------------------------------------------------ |
-| **InstancedMesh**            | ~7 draw calls per chunk vs 1 per block. 50× fewer total draw calls |
-| **Occlusion culling**        | Only render blocks with exposed faces. ~60-70% block reduction     |
-| **Shared geometry**          | Single BoxGeometry instance for all blocks                         |
-| **Material caching**         | One material per block type, reused across all chunks              |
-| **Throttled raycasting**     | Block highlight updates every 80ms, not every frame                |
-| **Cached raycast targets**   | Flat array rebuilt only on chunk changes                           |
-| **Chunk boundary detection** | World update only runs when player crosses chunk border            |
+- Rust owns authoritative world state.
+- TypeScript handles rendering, DOM UI, and input.
+- Mesh data crossing the Tauri boundary is already face-culled and render-ready.
+- Save files are written to the Tauri app data directory.
 
 ---
 
-## 📝 License
+## License
 
 MIT

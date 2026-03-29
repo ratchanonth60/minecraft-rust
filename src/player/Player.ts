@@ -1,49 +1,75 @@
 import * as THREE from "three";
+import { invoke } from "@tauri-apps/api/core";
 import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
 import { World } from "../world/World";
 import { BLOCK_GRASS } from "../world/TextureManager";
 
+interface PlayerSimulationOutput {
+  x: number;
+  y: number;
+  z: number;
+  velocity_y: number;
+  is_on_ground: boolean;
+}
+
+/**
+ * Browser-side player controller.
+ *
+ * Input collection, raycasts, and pointer lock live here. Actual physics and
+ * collision resolution are delegated to the Rust backend.
+ */
 export class Player {
   camera: THREE.PerspectiveCamera;
   controls: PointerLockControls;
   world: World;
   keys: Record<string, boolean> = {};
 
-  // Movement
-  baseSpeed = 5.0;
+  baseSpeed = 1.0;
   sprintMultiplier = 1.6;
   isSprinting = false;
 
-  // Physics
   velocityY = 0;
-  gravity = -25;
-  lastValidGroundY = 0;
   jumpForce = 9;
   isOnGround = false;
   playerHeight = 1.6;
+  selectedBlockType: number = BLOCK_GRASS;
 
-  // Raycasting
   private raycaster = new THREE.Raycaster();
   private center = new THREE.Vector2(0, 0);
-
-  // Block highlight
-  highlightMesh: THREE.LineSegments;
+  private forward = new THREE.Vector3();
+  private right = new THREE.Vector3();
+  private moveIntent = new THREE.Vector3();
   private highlightTimer = 0;
   private highlightInterval = 0.08;
+  private physicsAccumulator = 0;
+  private physicsPending = false;
 
-  // Selected block type
-  selectedBlockType: number = BLOCK_GRASS;
+  highlightMesh: THREE.LineSegments;
 
   constructor(
     camera: THREE.PerspectiveCamera,
     domElement: HTMLElement,
     world: World,
   ) {
+    /**
+     * Creates the browser-side player controller and binds all DOM input.
+     *
+     * What it does:
+     * - stores references to the camera, world bridge, and pointer-lock controls
+     * - creates a wireframe highlight mesh used for block targeting feedback
+     * - attaches keyboard and mouse listeners for movement and block interaction
+     *
+     * How it works:
+     * - pointer lock is requested when the canvas container is clicked
+     * - keyboard events only collect intent into `this.keys`
+     * - mouse clicks raycast against currently rendered chunk meshes
+     * - actual block edits are forwarded to Rust through `World`
+     */
     this.camera = camera;
     this.world = world;
     this.controls = new PointerLockControls(camera, domElement);
 
-    // Block highlight wireframe
+    // Outline mesh used to preview the currently targeted block.
     const hlGeom = new THREE.EdgesGeometry(
       new THREE.BoxGeometry(1.005, 1.005, 1.005),
     );
@@ -57,25 +83,27 @@ export class Player {
     this.highlightMesh.raycast = () => {};
     world.scene.add(this.highlightMesh);
 
-    // Lock pointer
+    // Pointer lock is the only browser-specific piece of movement ownership.
     domElement.addEventListener("click", () => {
       if (!this.controls.isLocked) this.controls.lock();
     });
 
-    // Keyboard
     document.addEventListener("keydown", (e) => {
       this.keys[e.code] = true;
     });
+
     document.addEventListener("keyup", (e) => {
       this.keys[e.code] = false;
-      if (e.code === "ControlLeft" || e.code === "ControlRight")
+      if (e.code === "ControlLeft" || e.code === "ControlRight") {
         this.isSprinting = false;
+      }
     });
 
-    // Block interaction
-    document.addEventListener("mousedown", (event) => {
+    document.addEventListener("mousedown", async (event) => {
       if (!this.controls.isLocked || !world.ready) return;
 
+      // Interaction still raycasts locally, but the actual block mutation and
+      // resulting chunk remesh happen on the Rust side.
       this.raycaster.setFromCamera(this.center, this.camera);
       this.raycaster.far = 6;
       const intersects = this.raycaster.intersectObjects(world.blocks, false);
@@ -84,16 +112,11 @@ export class Player {
       const hit = intersects[0];
 
       if (event.button === 0) {
-        // LEFT CLICK = BREAK
-        world.breakBlock(hit);
-      } else if (event.button === 2 && hit.face) {
-        // RIGHT CLICK = PLACE
-        const blockPos = world.getHitPosition(hit);
-        if (!blockPos) return;
+        await world.breakBlock(hit);
+      } else if (event.button === 2) {
+        const newPos = world.getPlacementPosition(hit);
+        if (!newPos) return;
 
-        const newPos = blockPos.clone().add(hit.face.normal).round();
-
-        // Don't place inside player
         const px = Math.round(this.camera.position.x);
         const pz = Math.round(this.camera.position.z);
         const feetY = Math.round(this.camera.position.y - this.playerHeight);
@@ -102,68 +125,61 @@ export class Player {
           Math.round(newPos.z) === pz &&
           Math.round(newPos.y) >= feetY &&
           Math.round(newPos.y) <= feetY + 1
-        )
+        ) {
           return;
+        }
 
-        world.addBlock(newPos, this.selectedBlockType);
+        await world.addBlock(newPos, this.selectedBlockType);
       }
     });
 
     document.addEventListener("contextmenu", (e) => e.preventDefault());
   }
 
+  /**
+   * Teleports the player to a new position.
+   *
+   * What it does:
+   * - copies the provided world position into the camera
+   * - clears vertical velocity and grounded state so old movement does not leak
+   *
+   * How it works:
+   * - the frontend camera is treated as the local representation of the player
+   * - the next backend physics step will continue from this new authoritative spot
+   */
+  setPosition(position: THREE.Vector3) {
+    this.camera.position.copy(position);
+    this.velocityY = 0;
+    this.isOnGround = false;
+  }
+
+  /**
+   * Runs one frame of local player-side updates.
+   *
+   * What it does:
+   * - ignores updates while pointer lock is inactive or the world is not ready
+   * - accumulates delta time for backend physics stepping
+   * - updates sprint intent from keyboard state
+   * - throttles block-highlight raycasts so they do not run every render frame
+   *
+   * How it works:
+   * - render frames can be more frequent than simulation steps
+   * - this method batches time in `physicsAccumulator`
+   * - once enough time has accumulated, it triggers `stepPhysics`
+   * - highlight updates stay local because they are purely visual feedback
+   */
   update(deltaTime: number) {
     if (!this.controls.isLocked || !this.world.ready) return;
 
-    if (this.keys["ControlLeft"] || this.keys["ControlRight"])
-      this.isSprinting = true;
-    const speed =
-      this.baseSpeed *
-      (this.isSprinting ? this.sprintMultiplier : 1) *
-      deltaTime;
+    this.physicsAccumulator += deltaTime;
+    this.isSprinting = this.keys["ControlLeft"] || this.keys["ControlRight"];
 
-    if (this.keys["KeyW"]) this.controls.moveForward(speed);
-    if (this.keys["KeyS"]) this.controls.moveForward(-speed);
-    if (this.keys["KeyA"]) this.controls.moveRight(-speed);
-    if (this.keys["KeyD"]) this.controls.moveRight(speed);
-
-    // Jump
-    if (this.keys["Space"] && this.isOnGround) {
-      this.velocityY = this.jumpForce;
-      this.isOnGround = false;
+    if (!this.physicsPending && this.physicsAccumulator >= 1 / 90) {
+      const dt = Math.min(this.physicsAccumulator, 0.05);
+      this.physicsAccumulator = 0;
+      void this.stepPhysics(dt);
     }
 
-    // Gravity
-    this.velocityY += this.gravity * deltaTime;
-    this.camera.position.y += this.velocityY * deltaTime;
-
-    // Ground collision
-    const groundY = this.world.getGroundHeight(
-      this.camera.position.x,
-      this.camera.position.z,
-    );
-    // Use cached ground height when chunk is unloaded (groundY === -1)
-    const effectiveGround = groundY >= 0 ? groundY : this.lastValidGroundY;
-    if (groundY >= 0) this.lastValidGroundY = groundY;
-    const surface = effectiveGround + 1;
-    if (
-      this.camera.position.y - this.playerHeight <= surface &&
-      this.velocityY <= 0
-    ) {
-      this.camera.position.y = surface + this.playerHeight;
-      this.velocityY = 0;
-      this.isOnGround = true;
-    } else {
-      this.isOnGround = false;
-    }
-
-    // Respawn on void
-    if (this.camera.position.y < -20) {
-      this.camera.position.set(0, 30, 0);
-      this.velocityY = 0;
-    }
-
-    // Throttled highlight
     this.highlightTimer += deltaTime;
     if (this.highlightTimer >= this.highlightInterval) {
       this.highlightTimer = 0;
@@ -171,25 +187,105 @@ export class Player {
     }
   }
 
+  /**
+   * Sends one movement simulation step to the Rust backend.
+   *
+   * What it does:
+   * - converts current keyboard intent into world-space movement vectors
+   * - sends position, jump state, sprint state, and vertical velocity to Rust
+   * - applies the returned authoritative position and grounded state locally
+   *
+   * How it works:
+   * - `forward` and `right` are derived from the current camera rotation
+   * - the movement vector is normalized so diagonal movement is not faster
+   * - Rust performs collision resolution and gravity
+   * - the result replaces local transient state instead of being blended
+   */
+  private async stepPhysics(deltaTime: number) {
+    this.physicsPending = true;
+
+    this.forward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+    this.forward.y = 0;
+    this.forward.normalize();
+
+    this.right.set(1, 0, 0).applyQuaternion(this.camera.quaternion);
+    this.right.y = 0;
+    this.right.normalize();
+
+    this.moveIntent.set(0, 0, 0);
+    if (this.keys["KeyW"]) this.moveIntent.add(this.forward);
+    if (this.keys["KeyS"]) this.moveIntent.sub(this.forward);
+    if (this.keys["KeyD"]) this.moveIntent.add(this.right);
+    if (this.keys["KeyA"]) this.moveIntent.sub(this.right);
+    if (this.moveIntent.lengthSq() > 0) {
+      this.moveIntent.normalize().multiplyScalar(this.baseSpeed);
+    }
+
+    try {
+      const next = await invoke<PlayerSimulationOutput>("simulate_player", {
+        input: {
+          x: this.camera.position.x,
+          y: this.camera.position.y,
+          z: this.camera.position.z,
+          velocity_y: this.velocityY,
+          delta_time: deltaTime,
+          move_x: this.moveIntent.x,
+          move_z: this.moveIntent.z,
+          jump: Boolean(this.keys["Space"]),
+          player_height: this.playerHeight,
+          sprinting: this.isSprinting,
+        },
+      });
+
+      this.camera.position.set(next.x, next.y, next.z);
+      this.velocityY = next.velocity_y;
+      this.isOnGround = next.is_on_ground;
+    } catch (error) {
+      console.error("simulate_player failed", error);
+    } finally {
+      this.physicsPending = false;
+    }
+  }
+
+  /**
+   * Updates the block highlight wireframe.
+   *
+   * What it does:
+   * - raycasts from the screen center into the currently rendered world meshes
+   * - resolves the targeted block position from the hit face
+   * - moves and toggles the outline mesh so the player sees what will be edited
+   *
+   * How it works:
+   * - the raycast is local because it only depends on visible render geometry
+   * - `World.getTargetBlockPosition` converts the hit point plus face normal
+   *   into the integer block cell that should be considered selected
+   */
   private updateHighlight() {
     this.raycaster.setFromCamera(this.center, this.camera);
     this.raycaster.far = 6;
-    const intersects = this.raycaster.intersectObjects(
-      this.world.blocks,
-      false,
-    );
+    const intersects = this.raycaster.intersectObjects(this.world.blocks, false);
 
     if (intersects.length > 0) {
-      const pos = this.world.getHitPosition(intersects[0]);
+      const pos = this.world.getTargetBlockPosition(intersects[0]);
       if (pos) {
         this.highlightMesh.position.copy(pos);
         this.highlightMesh.visible = true;
         return;
       }
     }
+
     this.highlightMesh.visible = false;
   }
 
+  /**
+   * Returns the player's current world position.
+   *
+   * What it does:
+   * - exposes the camera position to systems like chunk streaming and debug UI
+   *
+   * How it works:
+   * - the camera acts as the local player transform on the frontend
+   */
   getPosition(): THREE.Vector3 {
     return this.camera.position;
   }
